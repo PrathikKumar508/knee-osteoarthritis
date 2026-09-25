@@ -1,0 +1,30 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Data files (raw OAI files may contain sensitive patient data)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Models & binaries
+models/*.pkl
+models/*.joblib
+
+# OS & IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Reports & figures cache
+reports/figures/*
+!reports/figures/.gitkeep
