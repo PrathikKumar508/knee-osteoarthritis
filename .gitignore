@@ -28,3 +28,6 @@ models/*.joblib
 # Reports & figures cache
 reports/figures/*
 !reports/figures/.gitkeep
+
+
+streamlit-env/
