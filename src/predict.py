@@ -15,6 +15,7 @@ import joblib
 from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
 from src.config import config
+from src.explainability import compute_instance_shap
 
 
 def load_model_pipeline(model_path: Path = config.MODELS_DIR / "trained_pipeline.pkl") -> Dict[str, Any]:
@@ -85,19 +86,35 @@ def predict_patient_risk(
     else:
         risk_category = "Higher Risk"
 
+    # Feature contribution breakdown: real per-patient SHAP values when this
+    # model's entry has a saved background sample (models trained after this
+    # patch). Older artifacts fall back to the previous global-importance
+    # behaviour, which is the SAME value for every patient and is flagged as
+    # such via "personalized" below.
+    background = entry.get("shap_background")
     feature_contributions = {}
-    if hasattr(model, 'feature_importances_'):
-        importances = model.feature_importances_
-        for fname, imp in zip(feature_names, importances):
-            feature_contributions[fname] = round(float(imp), 4)
-    elif hasattr(model, 'coef_'):
-        coefs = model.coef_[0]
-        for fname, coef in zip(feature_names, coefs):
-            feature_contributions[fname] = round(float(coef), 4)
+    personalized = False
+    if background is not None:
+        try:
+            shap_vals = compute_instance_shap(model, X_proc, background)
+            for fname, val in zip(feature_names, shap_vals):
+                feature_contributions[fname] = round(float(val), 4)
+            personalized = True
+        except Exception as e:
+            print(f"[!] Per-patient SHAP explanation failed, falling back to global importances: {e}")
+
+    if not personalized:
+        if hasattr(model, 'feature_importances_'):
+            for fname, imp in zip(feature_names, model.feature_importances_):
+                feature_contributions[fname] = round(float(imp), 4)
+        elif hasattr(model, 'coef_'):
+            for fname, coef in zip(feature_names, model.coef_[0]):
+                feature_contributions[fname] = round(float(coef), 4)
 
     return {
         "predicted_probability": round(prob_progression, 4),
         "risk_category": risk_category,
         "feature_contributions": feature_contributions,
-        "model_used": chosen_name
+        "model_used": chosen_name,
+        "personalized": personalized,
     }

@@ -26,7 +26,7 @@ from src.config import config, OAIConfig
 from src.data_preprocessing import build_preprocessing_pipeline, get_feature_names_out
 from src.feature_engineering import create_progression_target, enforce_baseline_features_only
 from src.evaluate import compute_medical_metrics, plot_evaluation_curves, generate_evaluation_report
-from src.explainability import compute_shap_explanations
+from src.explainability import compute_shap_explanations, sample_background, sample_background
 
 
 def create_demo_synthetic_dataset(num_samples: int = 1000) -> pd.DataFrame:
@@ -127,7 +127,10 @@ def train_models(df: pd.DataFrame) -> Tuple[Any, Dict[str, Any]]:
             "model": model,
             "model_name": name,
             "feature_names": feature_names,
-            "metrics": metrics
+            "metrics": metrics,
+            # Small reference sample used to explain individual patients later
+            # (see src/explainability.py: compute_instance_shap).
+            "shap_background": sample_background(X_train_proc),
         }
 
     generate_evaluation_report(eval_results)

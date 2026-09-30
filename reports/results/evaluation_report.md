@@ -3,8 +3,9 @@
 
 | Model Name | ROC-AUC | Sensitivity (Recall) | Specificity | Precision | F1-Score | Brier Score | FN Count |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `Logistic Regression` | 0.7049 | 0.3733 | 0.8800 | 0.6512 | 0.4746 | 0.2075 | 47 |
-| `Random Forest` | 0.6401 | 0.1867 | 0.8800 | 0.4828 | 0.2692 | 0.2213 | 61 |
+| `Logistic Regression` | 0.6306 | 0.0000 | 1.0000 | 0.0000 | 0.0000 | 0.1168 | 196 |
+| `Random Forest` | 0.6172 | 0.0000 | 1.0000 | 0.0000 | 0.0000 | 0.1183 | 196 |
+| `XGBoost` | 0.6191 | 0.0000 | 0.9992 | 0.0000 | 0.0000 | 0.1188 | 196 |
 
 ### Medical Performance Interpretation
 - **Sensitivity / Recall**: Crucial for screening; false negatives represent high-risk progression patients missed by the model.

@@ -14,6 +14,51 @@ from typing import Dict, List, Any, Tuple
 from src.config import config
 
 
+def compute_instance_shap(model, x_processed, background):
+    """
+    Per-instance SHAP contributions for the positive (progression) class,
+    for ONE patient's already-preprocessed input row.
+
+    Tree models are tried on the probability scale first. Some tree ensembles
+    trained on one-hot encoded binary columns trip a SHAP limitation
+    ("Categorical split is not yet supported") in that mode; when that
+    happens we fall back to tree_path_dependent, which needs no background
+    sample but returns values on the model's raw margin (log-odds-like)
+    scale rather than probability. Logistic Regression is always explained
+    on its linear (log-odds) scale. Magnitudes are therefore not directly
+    comparable across model types, but the ranking and sign within one
+    patient's explanation are valid regardless of which mode was used.
+    """
+    if hasattr(model, "coef_"):
+        explainer = shap.LinearExplainer(model, background)
+        raw = explainer.shap_values(x_processed)
+    else:
+        try:
+            explainer = shap.TreeExplainer(model, background, model_output="probability")
+            raw = explainer.shap_values(x_processed)
+        except Exception:
+            explainer = shap.TreeExplainer(model, feature_perturbation="tree_path_dependent")
+            raw = explainer.shap_values(x_processed)
+
+    values = np.asarray(raw)
+    if values.ndim == 3:
+        values = values[..., -1]
+    elif isinstance(raw, list):
+        values = np.asarray(raw[-1])
+    return values.reshape(-1)
+
+
+def sample_background(X_processed, n=100, random_state=42):
+    """A small reference sample of processed rows, saved with the trained
+    pipeline so predict.py can explain new patients without needing the
+    full training set at inference time."""
+    rng = np.random.default_rng(random_state)
+    if X_processed.shape[0] > n:
+        idx = rng.choice(X_processed.shape[0], size=n, replace=False)
+        return X_processed[idx]
+    return X_processed
+
+
 def compute_shap_explanations(
     model: Any,
     X_processed: np.ndarray,

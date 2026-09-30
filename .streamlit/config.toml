@@ -1,0 +1,10 @@
+# Save as .streamlit/config.toml next to app.py's project root.
+# Keeps Streamlit's own widgets (slider thumbs, focus rings) on the single petrol accent.
+[theme]
+base = "light"
+primaryColor = "#0f5c70"
+backgroundColor = "#f3f5f7"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#14202b"
+font = "sans serif"
+
