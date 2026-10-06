@@ -19,15 +19,21 @@ def compute_instance_shap(model, x_processed, background):
     Per-instance SHAP contributions for the positive (progression) class,
     for ONE patient's already-preprocessed input row.
 
-    Tree models are tried on the probability scale first. Some tree ensembles
-    trained on one-hot encoded binary columns trip a SHAP limitation
-    ("Categorical split is not yet supported") in that mode; when that
-    happens we fall back to tree_path_dependent, which needs no background
-    sample but returns values on the model's raw margin (log-odds-like)
-    scale rather than probability. Logistic Regression is always explained
-    on its linear (log-odds) scale. Magnitudes are therefore not directly
-    comparable across model types, but the ranking and sign within one
-    patient's explanation are valid regardless of which mode was used.
+    Returns (values, scale):
+      - values: 1D array of per-feature contributions.
+      - scale: "probability" or "log_odds", determined EMPIRICALLY rather
+        than assumed from model type. Some tree ensembles trained on
+        one-hot encoded binary columns trip a SHAP limitation ("Categorical
+        split is not yet supported") when asked for probability-scale
+        output; the fallback (tree_path_dependent) happens to still be on
+        the probability scale for scikit-learn's RandomForestClassifier
+        (its trees store class probabilities directly) but is on the raw
+        margin / log-odds scale for gradient-boosted models like XGBoost.
+        Rather than hardcode that per model type, we check whether the
+        SHAP base value plus the sum of this patient's contributions
+        reconstructs the model's own predicted probability; if it does,
+        the scale is "probability", otherwise "log_odds". This is robust
+        to whichever code path SHAP actually took.
     """
     if hasattr(model, "coef_"):
         explainer = shap.LinearExplainer(model, background)
@@ -45,13 +51,22 @@ def compute_instance_shap(model, x_processed, background):
         values = values[..., -1]
     elif isinstance(raw, list):
         values = np.asarray(raw[-1])
-    return values.reshape(-1)
+    values = values.reshape(-1)
+
+    base = explainer.expected_value
+    if hasattr(base, "__len__"):
+        base = np.asarray(base).reshape(-1)[-1]
+    reconstructed = float(base) + float(values.sum())
+    actual_prob = float(model.predict_proba(x_processed)[0, 1])
+    scale = "probability" if abs(reconstructed - actual_prob) < 0.02 else "log_odds"
+
+    return values, scale
 
 
 def sample_background(X_processed, n=100, random_state=42):
-    """A small reference sample of processed rows, saved with the trained
-    pipeline so predict.py can explain new patients without needing the
-    full training set at inference time."""
+    """A small reference sample of processed rows, saved per model so
+    predict.py can explain new patients without needing the full training
+    set at inference time."""
     rng = np.random.default_rng(random_state)
     if X_processed.shape[0] > n:
         idx = rng.choice(X_processed.shape[0], size=n, replace=False)

@@ -23,7 +23,7 @@ import streamlit as st
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.config import config
-from src.predict import predict_patient_risk, load_model_pipeline
+from src.predict import predict_patient_risk, load_model_pipeline, list_available_models
 
 # ---------------------------------------------------------------------------
 # Page configuration
@@ -312,9 +312,13 @@ def base_name(fname: str) -> str:
     return fname
 
 
-def driver_rows_html(items, vmax: float) -> str:
+def driver_rows_html(items) -> str:
+    """Bars are scaled against THIS group's own largest contribution, so a
+    group whose biggest factor is small doesn't get visually flattened by a
+    shared scale borrowed from a different, larger group."""
     if not items:
         return '<div class="empty">No factors in this group.</div>'
+    vmax = max((abs(v) for _, v in items), default=0.0)
     rows = ""
     for k, v in items:
         cls = "up" if v > 0 else "down"
@@ -342,7 +346,19 @@ def style_fig(fig, height: int = 300, margin: dict = None):
     return fig
 
 
-def create_feature_contribution_chart(feature_contributions: dict, top_n: int = 8):
+SCALE_AXIS_TITLE = {
+    "probability": "Effect on predicted probability (positive raises risk)",
+    "log_odds": "Effect on log-odds (positive raises risk)",
+    "relative_importance": "Relative importance (not directional; older model artifact)",
+}
+SCALE_SHORT_LABEL = {
+    "probability": "probability scale",
+    "log_odds": "log-odds scale",
+    "relative_importance": "relative importance, not a per-patient effect size",
+}
+
+
+def create_feature_contribution_chart(feature_contributions: dict, scale: str = "log_odds", top_n: int = 8):
     sorted_feats = sorted(feature_contributions.items(), key=lambda x: abs(x[1]), reverse=True)[:top_n]
     sorted_feats.reverse()
     names = [friendly_feature_name(k) for k, _ in sorted_feats]
@@ -354,7 +370,7 @@ def create_feature_contribution_chart(feature_contributions: dict, top_n: int = 
         text=[f"{v:+.3f}" for v in values], textposition="outside", cliponaxis=False,
         hoverinfo="x+y",
     ))
-    fig.update_xaxes(title="Effect on log-odds (positive raises risk)")
+    fig.update_xaxes(title=SCALE_AXIS_TITLE.get(scale, SCALE_AXIS_TITLE["log_odds"]))
     return style_fig(fig, height=320, margin=dict(l=10, r=50, t=10, b=40))
 
 
@@ -436,7 +452,7 @@ def render_scenario_panel(assess: dict, pipeline_dict, t_low: float, t_high: flo
             s_stiff = st.slider("WOMAC stiffness (0 to 8)", 0, 8, int(base["V00WOMST"]), key=f"wi_stiff_{n}")
 
     scenario = dict(base, V00BMI=s_bmi, V00PASE=s_pase, V00WOMKP=s_pain, V00WOMAD=s_dis, V00WOMST=s_stiff)
-    prob_s = predict_patient_risk(scenario, pipeline_dict)["predicted_probability"]
+    prob_s = predict_patient_risk(scenario, pipeline_dict, model_name=assess.get("model_name"))["predicted_probability"]
     delta = (prob_s - prob0) * 100
     tier0, _ = tier_of(prob0, t_low, t_high)
     tier_s, _ = tier_of(prob_s, t_low, t_high)
@@ -480,27 +496,29 @@ def render_assessment(assess: dict, pipeline_dict, t_low: float, t_high: float, 
     render(readout_html("Progression probability", prob, t_low, t_high, note))
 
     # Contributing factors, split by whether they can be changed
-    section("Contributing factors", "Largest model contributions, grouped by whether the measure can be changed.")
+    scale = assess.get("scale", "log_odds")
+    section("Contributing factors",
+            f"Largest model contributions, grouped by whether the measure can be changed. "
+            f"Values are on the {SCALE_SHORT_LABEL.get(scale, scale)}.")
     if contributions:
         ranked = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)
-        vmax = abs(ranked[0][1]) if ranked else 1.0
         fixed = [kv for kv in ranked if base_name(kv[0]) not in MODIFIABLE][:4]
         modif = [kv for kv in ranked if base_name(kv[0]) in MODIFIABLE][:4]
         f_col, m_col = st.columns(2)
         with f_col:
             with st.container(border=True):
                 group("Fixed at baseline")
-                render(driver_rows_html(fixed, vmax))
+                render(driver_rows_html(fixed))
         with m_col:
             with st.container(border=True):
                 group("Modifiable")
-                render(driver_rows_html(modif, vmax))
+                render(driver_rows_html(modif))
 
         c1, c2 = st.columns([1.2, 1])
         with c1:
             with st.container(border=True):
                 group("All factors, direction and magnitude")
-                st.plotly_chart(create_feature_contribution_chart(contributions), use_container_width=True)
+                st.plotly_chart(create_feature_contribution_chart(contributions, scale=scale), use_container_width=True)
         with c2:
             with st.container(border=True):
                 group("Profile against study median")
@@ -598,15 +616,23 @@ def main():
         )
 
     # Sidebar: thresholds and active model
+    chosen_model_name = None
     with st.sidebar:
         st.markdown("**Risk thresholds**")
         t_low = st.slider("Low to moderate", 0.10, 0.50, float(config.LOW_RISK_THRESHOLD), 0.05)
         t_high = st.slider("Moderate to elevated", 0.50, 0.85, float(config.HIGH_RISK_THRESHOLD), 0.05)
         if model_ok:
-            st.markdown("**Active model**")
-            st.metric("ROC-AUC", f"{metrics.get('ROC_AUC', 0.0):.3f}")
-            st.metric("Sensitivity", f"{metrics.get('Sensitivity_Recall', 0.0):.3f}")
-            st.metric("Specificity", f"{metrics.get('Specificity', 0.0):.3f}")
+            available = list_available_models(pipeline_dict)
+            names = [m["name"] for m in available]
+            default_idx = next((i for i, m in enumerate(available) if m["is_default"]), 0)
+            st.markdown("**Model**")
+            chosen_model_name = st.selectbox("Score patients using", names, index=default_idx,
+                                             label_visibility="collapsed")
+            active = next(m for m in available if m["name"] == chosen_model_name)
+            st.markdown("**Selected model performance**")
+            st.metric("ROC-AUC", f"{active['metrics'].get('ROC_AUC', 0.0):.3f}")
+            st.metric("Sensitivity", f"{active['metrics'].get('Sensitivity_Recall', 0.0):.3f}")
+            st.metric("Specificity", f"{active['metrics'].get('Specificity', 0.0):.3f}")
 
     tab_calc, tab_compare, tab_batch, tab_models, tab_shap, tab_oai = st.tabs([
         "Assessment", "Comparison", "Batch screening",
@@ -689,7 +715,7 @@ def main():
                 st.error("Model pipeline not available. Run `python -m src.train` to train the model first.")
             else:
                 with st.spinner("Computing risk estimate"):
-                    result = predict_patient_risk(patient_input, pipeline_dict)
+                    result = predict_patient_risk(patient_input, pipeline_dict, model_name=chosen_model_name)
                 st.session_state.assess_n = st.session_state.get("assess_n", 0) + 1
                 st.session_state.assessment = {
                     "n": st.session_state.assess_n,
@@ -698,6 +724,8 @@ def main():
                     "prob": result["predicted_probability"],
                     "model_used": result.get("model_used", "Ensemble Model"),
                     "contributions": result.get("feature_contributions", {}),
+                    "scale": result.get("contribution_scale", "log_odds"),
+                    "model_name": chosen_model_name,
                 }
 
         assess = st.session_state.get("assessment")

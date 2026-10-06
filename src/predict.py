@@ -61,8 +61,15 @@ def predict_patient_risk(
     Returns:
       - prob_progression: Probability between 0.0 and 1.0
       - risk_category: 'Low Risk', 'Moderate Risk', or 'Higher Risk'
-      - feature_contributions: Top features influencing the risk estimate
+      - feature_contributions: Per-patient SHAP contributions (real per-patient
+        values when a background sample was saved with this model; otherwise
+        the older global importances, flagged via "personalized": False)
+      - contribution_scale: "probability", "log_odds", or "relative_importance"
+        -- see src/explainability.py: compute_instance_shap for how this is
+        determined. Use it to label any chart or number built from
+        feature_contributions, since the two scales are not comparable.
       - model_used: Name of the model that produced this prediction
+      - personalized: whether feature_contributions is genuinely per-patient
     """
     if pipeline_dict is None:
         pipeline_dict = load_model_pipeline()
@@ -87,16 +94,17 @@ def predict_patient_risk(
         risk_category = "Higher Risk"
 
     # Feature contribution breakdown: real per-patient SHAP values when this
-    # model's entry has a saved background sample (models trained after this
-    # patch). Older artifacts fall back to the previous global-importance
-    # behaviour, which is the SAME value for every patient and is flagged as
-    # such via "personalized" below.
+    # model's entry has a saved background sample (models trained after the
+    # SHAP personalization patch). Older artifacts fall back to the previous
+    # global-importance behaviour, which is the SAME value for every patient
+    # and is flagged as such via "personalized" below.
     background = entry.get("shap_background")
     feature_contributions = {}
     personalized = False
+    contribution_scale = "relative_importance"
     if background is not None:
         try:
-            shap_vals = compute_instance_shap(model, X_proc, background)
+            shap_vals, contribution_scale = compute_instance_shap(model, X_proc, background)
             for fname, val in zip(feature_names, shap_vals):
                 feature_contributions[fname] = round(float(val), 4)
             personalized = True
@@ -104,6 +112,7 @@ def predict_patient_risk(
             print(f"[!] Per-patient SHAP explanation failed, falling back to global importances: {e}")
 
     if not personalized:
+        contribution_scale = "relative_importance"
         if hasattr(model, 'feature_importances_'):
             for fname, imp in zip(feature_names, model.feature_importances_):
                 feature_contributions[fname] = round(float(imp), 4)
@@ -117,4 +126,5 @@ def predict_patient_risk(
         "feature_contributions": feature_contributions,
         "model_used": chosen_name,
         "personalized": personalized,
+        "contribution_scale": contribution_scale,
     }
